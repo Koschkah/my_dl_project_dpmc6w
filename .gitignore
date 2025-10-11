@@ -1,0 +1,15 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Adatok és kimenetek
+data/
+output/
+training_log.txt
+
+# IDE fájlok
+.vscode/
+.idea/
+
+dev.sh
+*.cmd
