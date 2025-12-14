@@ -69,8 +69,8 @@ echo "[run] (1/3) Data processing..."
 python "$SRC_DIR/01_data_processing.py"
 
 # sanity check output
-if [[ ! -f "$OUT_DIR/processed_dataset.csv" ]]; then
-  echo "[run][ERROR] 01_data_processing did not produce $OUT_DIR/processed_dataset.csv"
+if [[ ! -f "$DATA_DIR/processed_dataset.csv" ]]; then
+  echo "[run][ERROR] 01_data_processing did not produce $DATA_DIR/processed_dataset.csv"
   exit 1
 fi
 

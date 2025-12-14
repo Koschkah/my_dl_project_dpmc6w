@@ -211,6 +211,25 @@ def eval_metrics(y_true, y_pred):
         "RMSE": float(mean_squared_error(y_true, y_pred, squared=False)),
     }
 
+def threshold_accuracy(y_true: np.ndarray, y_pred: np.ndarray, thresholds=(60, 120, 180)):
+    """Accuracy: arány, ahol |pred-true| <= threshold."""
+    y_true = np.asarray(y_true).astype(float)
+    y_pred = np.asarray(y_pred).astype(float)
+    abs_err = np.abs(y_pred - y_true)
+    out = {}
+    for t in thresholds:
+        out[f"ACC@{t}s"] = float((abs_err <= t).mean())
+    return out
+
+
+def format_acc_table(acc_dict_by_model: dict) -> pd.DataFrame:
+    """acc_dict_by_model: {model_name: {"ACC@60s":..., ...}} -> DataFrame"""
+    df = pd.DataFrame.from_dict(acc_dict_by_model, orient="index")
+    df.index.name = "model"
+    # rendezés oszlopok szerint, ha kell
+    cols = [c for c in ["ACC@60s", "ACC@120s", "ACC@180s"] if c in df.columns]
+    return df[cols].reset_index()
+
 
 # ============================================================
 # 6. MAIN
@@ -243,6 +262,35 @@ def main():
 
     print("[03_evaluation] rows:", len(df))
     print("[03_evaluation] train/val/test:", len(train_df), len(val_df), len(test_df))
+
+
+    # ----- Baseline predikciók a test halmazon (accuracy-hoz is kell) -----
+    y_true_test = test_df[TARGET].astype(float).values
+
+    # Mean baseline: train átlag (ugyanaz split logikával, mint 02)
+    mean_target = train_df[TARGET].astype(float).mean()
+    pred_mean = np.full_like(y_true_test, fill_value=mean_target, dtype=float)
+
+    # Current delay baseline
+    pred_current = test_df["delay_seconds_calc"].astype(float).values
+
+    # Linear Regression baseline betöltése + pred
+    lr_path = BASELINE_DIR / "linear_regression.joblib"
+    lr_scaler_path = BASELINE_DIR / "linear_regression_scaler.joblib"
+
+    pred_lr = None
+    if lr_path.exists() and lr_scaler_path.exists():
+        lr = joblib.load(lr_path)
+        lr_scaler = joblib.load(lr_scaler_path)
+        X_test_lr = test_df[FEATURES].values
+        X_test_lr_s = lr_scaler.transform(X_test_lr)
+        pred_lr = lr.predict(X_test_lr_s).astype(float)
+    else:
+        print("[03_evaluation][WARN] LinearRegression artifacts missing, skipping LR accuracy.")
+
+
+
+
 
     # ----- GNN modell + scaler-ek betöltése -----
     ckpt_path = MODELS_DIR / "gnn_sage_k2.pt"
@@ -314,6 +362,23 @@ def main():
     y_true = y_scaler.inverse_transform(y_scaled_true.reshape(-1, 1)).ravel()
 
     gnn_metrics = eval_metrics(y_true, preds)
+
+    # ----- Threshold accuracy (60/120/180s) -----
+    acc_by_model = {}
+
+    acc_by_model["baseline_mean"] = threshold_accuracy(y_true_test, pred_mean, thresholds=(60, 120, 180))
+    acc_by_model["baseline_current_delay"] = threshold_accuracy(y_true_test, pred_current, thresholds=(60, 120, 180))
+
+    if pred_lr is not None:
+        acc_by_model["linear_regression"] = threshold_accuracy(y_true_test, pred_lr, thresholds=(60, 120, 180))
+
+    # GNN: itt y_true a test cél, preds a gnn pred (mindkettő másodpercben)
+    acc_by_model["gnn_sage_k2"] = threshold_accuracy(y_true, preds, thresholds=(60, 120, 180))
+
+    acc_table = format_acc_table(acc_by_model)
+
+
+
     print(
         f"[03_evaluation] GNN (GraphSAGE K={k_hop}) TEST "
         f"MAE={gnn_metrics['MAE']:.2f}  RMSE={gnn_metrics['RMSE']:.2f}"
@@ -351,9 +416,26 @@ def main():
 
     base_res.to_csv(eval_csv, index=False)
     base_res.to_json(eval_json, orient="records", indent=2)
+    
+    acc_csv = eval_out_dir / "threshold_accuracy.csv"
+    acc_table.to_csv(acc_csv, index=False)
+    print(f"[03_evaluation] Saved threshold accuracy to {acc_csv}")
 
     print(f"[03_evaluation] Saved baseline+GNN eval to {eval_csv}")
     print(f"[03_evaluation] Saved baseline+GNN eval JSON to {eval_json}")
+
+
+    #print the evaluatoin metrics to log
+
+    print("[03_evaluation] baseline_evaluation.csv content:")
+    print(base_res.to_string(index=False))
+    print()
+    
+    print("\n[03_evaluation] Threshold accuracy table (|pred-true| <= T):")
+    print(acc_table.to_string(index=False))
+    print()
+
+
 
 
 if __name__ == "__main__":
